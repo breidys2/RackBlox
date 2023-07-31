@@ -7,4 +7,4 @@ if [[ $# -gt 0 ]] ; then
 fi
 
 make
-./cnexcmd $PORT
+sudo ./cnexcmd $PORT

@@ -47,7 +47,7 @@ uint64_t pkt_recv = 0;
 
 
 /************* CUSTOM PARAMS **************/
-uint32_t qps = 100000;
+uint32_t qps = 1000;
 
 //Packet Related
 uint32_t req_id = 0;
@@ -105,7 +105,9 @@ static void generate_packet(uint32_t lcore_id, struct rte_mbuf *mbuf, uint64_t g
         req->type = rb_read;
     } else {
         req->type = rb_write;
+        //memset(req->data, 'y', DATA_SZ);
     }
+    //req->type = rb_gc_finish;
     req->addr = cur_req.Addr;
     //req->type = msg_types[vssd_id];
     //For now, always select vssd 1
@@ -121,7 +123,7 @@ static void generate_packet(uint32_t lcore_id, struct rte_mbuf *mbuf, uint64_t g
     printf("eg_lat: %lu\n", req->eg_lat);
     printf("gen_ns: %lu\n", req->gen_ns);
     printf("addr: %u\n", req->addr);
-    printf("Diff is: %u\n", abs(req->eg_lat - req->ing_lat));
+    //printf("data preview %c\n", req->data[0]);
     printf("================\n");
 
     //Update with the addition of our custom stuff
@@ -158,7 +160,8 @@ static void process_packet(uint32_t lcore_id, struct rte_mbuf *mbuf) {
     printf("eg_lat: %lu\n", req->eg_lat);
     printf("gen_ns: %lu\n", req->gen_ns);
     printf("addr: %u\n", req->addr);
-    printf("Diff is: %u\n", abs(req->eg_lat - req->ing_lat));
+    printf("lat: %lu\n", req->lat);
+    printf("data: %c\n", req->data[0]);
     printf("================\n");
 }
 

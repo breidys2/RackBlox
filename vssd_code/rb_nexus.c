@@ -31,16 +31,15 @@ inline double TimeGap( struct timeval* t_start, struct timeval* t_end ) {
 }
 
 typedef struct _thread_data_t {
-    int n_blks;
+    vssd_t * vssd;
+    uint32_t* mapping;
     int index;
-    u32 blks[BLK_NUM];
-    u32 s_blks[BLK_NUM];
 } thread_data_t;
 static pthread_mutex_t llk;
 static pthread_mutex_t dev_lock;
 static pthread_mutex_t reply_lock;
 static pthread_mutex_t gc_lock;
-static pthread_mutex_t gc_resp_lock;
+static pthread_mutex_t gcresp_lock;
 static const int BLK_SZ = PAGE_SIZE*4*256;
 static const int PG_PER_BLK = 256;
 static const int BLK_SZ_META = META_SIZE*4*256;
@@ -129,33 +128,48 @@ void * run_net(void *args) {
     setsockopt(recv_socket, SOL_SOCKET, SO_RCVTIMEO, &read_timeout, sizeof read_timeout);
    
     len = sizeof(cliaddr);  //len is value/result
+	struct timespec start;
+    clock_gettime(CLOCK_REALTIME, &start);
    
     printf("waiting\n");
+    sleep(5);
     while(1) {
+        if(check_exp(&start)) {
+            break;
+        }
         n = recvfrom(recv_socket, (char *)buffer, MAXLINE, 
                     MSG_WAITALL, ( struct sockaddr *) &cliaddr,
                     &len);
         if (n > 0) {
             //TODO have the writes be duplicated to the other vssd
-            MessageReply* msg = (MessageReply*)malloc(sizeof(MessageReply));
+            Message* msg = (Message*)malloc(sizeof(Message));
             memcpy(msg, buffer, n);
-            printf("Recv pkt with type: %d\n", msg->msg.type);
+            printf("Recv pkt with type: %d\n", msg->type);
             rb_node_t* new_node = (rb_node_t*) malloc(sizeof(rb_node_t));
             new_node->msg = msg;
 
-            //Update sliding window
-            sliding_window -= window_vals[win_ptr]/WINDOW_SZ;
-            window_vals[win_ptr] = msg->lat;
-            sliding_window += msg->lat/WINDOW_SZ;
-            win_ptr = (win_ptr + 1) % WINDOW_SZ;
+            if (msg->type == rb_read || msg->type == rb_write) {
+                //Update sliding window
+                sliding_window -= window_vals[win_ptr]/WINDOW_SZ;
+                window_vals[win_ptr] = msg->lat;
+                sliding_window += msg->lat/WINDOW_SZ;
+                win_ptr = (win_ptr + 1) % WINDOW_SZ;
+                msg->lat += sliding_window;
 
-            //Set the combined prio 
-            new_node->prio = (uint64_t) (sliding_window + msg->lat - get_cur_ns());
+                //Set the combined prio 
+                new_node->prio = (uint64_t) (msg->lat - get_cur_ns());
 
-            //Insert
-            pthread_mutex_lock(&dev_lock);
-            insert_list_sorted(new_node, dev_q_head, dev_q_tail);
-            pthread_mutex_unlock(&dev_lock);
+                //Insert
+                pthread_mutex_lock(&dev_lock);
+                insert_list_sorted(new_node, dev_q_head, dev_q_tail);
+                pthread_mutex_unlock(&dev_lock);
+            } else if (msg->type == rb_gc_deny || msg->type == rb_gc_success || msg->type == rb_gc_fin_suc) {
+                //Insert
+                pthread_mutex_lock(&gcresp_lock);
+                printf("Inserting into gcresp\n");
+                insert_list_sorted(new_node, gcresp_q_head, gcresp_q_tail);
+                pthread_mutex_unlock(&gcresp_lock);
+            }
         }
         //Need to recv something first
         if (cliaddr.sin_port == 0) continue;
@@ -167,10 +181,10 @@ void * run_net(void *args) {
         }
         pthread_mutex_unlock(&reply_lock);
         if (reply_node != NULL) {
-            MessageReply* msg_reply = reply_node->msg;
+            Message* msg_reply = reply_node->msg;
             //send data back
-            memcpy(buffer, msg_reply, sizeof(MessageReply));
-            n = sendto(recv_socket, buffer, sizeof(MessageReply), 0, (struct sockaddr *) &cliaddr, len);
+            memcpy(buffer, msg_reply, sizeof(Message));
+            n = sendto(recv_socket, buffer, sizeof(Message), 0, (struct sockaddr *) &cliaddr, len);
             free_node(reply_node);
         }
         //Check GC q
@@ -181,24 +195,54 @@ void * run_net(void *args) {
         }
         pthread_mutex_unlock(&gc_lock);
         if (reply_node != NULL) {
-            MessageReply* msg_reply = reply_node->msg;
+            Message* msg_reply = reply_node->msg;
             //Send GC Packet to switch
-            memcpy(buffer, msg_reply, sizeof(MessageReply));
-            n = sendto(recv_socket, buffer, sizeof(MessageReply), 0, (struct sockaddr *) &cliaddr, len);
+            printf("Sent gc packet to spr8\n");
+            memcpy(buffer, msg_reply, sizeof(Message));
+            n = sendto(recv_socket, buffer, sizeof(Message), 0, (struct sockaddr *) &cliaddr, len);
             free_node(reply_node);
         }
-
     }
     pthread_exit(NULL);
 }
 
 void * run_worker(void * args) {
     srand(time(NULL));
-    thread_data_t * data = (thread_data_t *) args;
-	struct timeval start, end;
+    //Parse input args
+    thread_data_t * thr_data = (thread_data_t *)args;
+    uint32_t* mapping_table = thr_data->mapping;
+    int read_wrap = read_prep * 1024;
+    vssd_t* v = thr_data->vssd;
+    int cur_page = 0;
+	struct timespec start;
+
+
+    //Prep the read blocks
+    int i,j,k;
+    uint32_t * prepped_reads = calloc(read_prep * 1024, sizeof(uint32_t));
+    for(k = 0; k < chl_num; k++) {
+        int index = v->allocated_chl[k];
+        for(i = 0; i < read_prep; i++) {
+            uint32_t lba = alloc_block_v(v, index);
+            for(j = 0; j < 1024; j++) {
+                int cur_ind = i * 1024 + j;
+                prepped_reads[cur_ind] = lba * 1024 + j;
+            }
+            write_block_v(v,lba, buf, metabuf);
+        }
+    }
+
+    printf("vSSD: %d is ready\n", thr_data->index);
+    uint32_t cur_lba = alloc_block_v(v, v->allocated_chl[0]);
+    rb_node_t* reply_node;
     
+    clock_gettime(CLOCK_REALTIME, &start);
     while(1) {
-        rb_node_t* reply_node = NULL;
+
+        if(check_exp(&start)) {
+            break;
+        }
+        reply_node = NULL;
         pthread_mutex_lock(&dev_lock);
         if (dev_q_head->next != dev_q_tail) {
             reply_node = remove_list_tail(dev_q_tail);
@@ -206,31 +250,93 @@ void * run_worker(void * args) {
         pthread_mutex_unlock(&dev_lock);
         //execute received request
         if (reply_node != NULL) {
-            printf("Fetched req with type: %d\n", reply_node->msg->msg.type);
-            if (reply_node->msg->msg.type == rb_read) {
-                //TODO execute read
-                reply_node->msg->msg.type == rb_read_reply;
+            printf("Fetched req with type: %d\n", reply_node->msg->type);
+            if (reply_node->msg->type == rb_read) {
+                uint32_t map_index = prepped_reads[cur_read];
+                cur_read = (cur_read + 1) % read_wrap;
+                //Get the block and page indices from our mapped value, need these for the read func
+                uint32_t block_ind = map_index/1024;
+                uint32_t page_ind = map_index%1024;
+                read_page_v(v,block_ind, page_ind, readbuf, readmetabuf);
+                memcpy(reply_node->msg->data, readbuf, 4096);
+                reply_node->msg->type = rb_read_reply;
             } else {
-                //TODO execute write
-                reply_node->msg->msg.type == rb_write_reply;
+                mapping_table[reply_node->msg->addr] = cur_lba * 1024 + cur_page;
+                cur_page++;
+                if (cur_page == 1024) {
+                    write_block_v(v,cur_lba, buf, metabuf);
+                    cur_lba = alloc_block_v(v, v->allocated_chl[0]);
+                }
+                reply_node->msg->type = rb_write_reply;
             }
             pthread_mutex_lock(&reply_lock);
             insert_list_head(reply_node, reply_q_head);
             pthread_mutex_unlock(&reply_lock);
         }
     }
-
+    //Cleanup
+    erase_blks_v(v);
     pthread_exit(NULL);
 }
 
 void * run_gc(void * args) {
+
     //Parse input args
+    thread_data_t * thr_data = (thread_data_t *)args;
+    uint32_t* mapping_table = thr_data->mapping;
+    vssd_t* v = thr_data->vssd;
+
+	struct timespec start;
+    clock_gettime(CLOCK_REALTIME, &start);
+    int tgc = 10;
+
     while(1) {
+        sleep(5);
+        if(check_exp(&start)) {
+            break;
+        }
         //Check GC status
-        //If hit soft -> send gc req
-        //Receive GC -> accept -> do gc
-        //Receive gc deny -> do nothing
+        //double cur_gc_thresh = gc_thresh(v);
+        double cur_gc_thresh = 0.45;
         //if hit hard -> send gc packet
+        if (cur_gc_thresh < soft_thresh || tgc > 0) {
+            tgc--;
+            //Generate the Message
+            rb_node_t* new_node = (rb_node_t*)malloc(sizeof(rb_node_t));
+            new_node->msg = (Message*)malloc(sizeof(Message));
+            new_node->msg->vssd_id = vSSD_id;
+            if (cur_gc_thresh < hard_thresh) {
+                new_node->msg->type = rb_gc;
+            } else {
+                new_node->msg->type = rb_gc_request;
+            }
+            //Lock
+            pthread_mutex_lock(&gc_lock);
+            printf("Sending gc req with type %d for %d\n", new_node->msg->type, new_node->msg->vssd_id);
+            insert_list_head(new_node,gc_q_head);
+            pthread_mutex_unlock(&gc_lock);
+        } 
+        rb_node_t * reply_node = NULL;
+        pthread_mutex_lock(&gcresp_lock);
+        if (gcresp_q_head->next!=gcresp_q_tail) {
+            reply_node = remove_list_tail(gcresp_q_tail);
+        }
+        pthread_mutex_unlock(&gcresp_lock);
+        if (reply_node != NULL) {
+            printf("recv gc resp packet\n");
+            Message* msg_reply = reply_node->msg;
+            if (msg_reply->type == rb_gc_success) {
+                //Receive GC -> accept -> do gc
+                printf("Received gc success\n");
+                do_gc(v);
+            } else if (msg_reply->type == rb_gc_deny) {
+                //Receive gc deny -> do nothing
+                printf("Received gc deny\n");
+            } else {
+                printf("Got bad gc response!\n");
+            }
+            free(reply_node);
+        }
     }
     pthread_exit(NULL);
 }
@@ -244,25 +350,31 @@ int main(int argc, char* argv[]) {
     pthread_mutex_init(&gc_lock, NULL);
     pthread_mutex_init(&gcresp_lock, NULL);
 
+    vSSD_id = port - 8885;
+
+    buf = (char*)malloc(BLK_SZ);
+    memset(buf, 'x', BLK_SZ);
+    metabuf = (char*)malloc(BLK_SZ_META);
+    memset(metabuf, 'z', BLK_SZ_META);
+    readbuf = (char*)malloc(BLK_SZ);
+    memset(readbuf, 'x', BLK_SZ);
+    readmetabuf = (char*)malloc(BLK_SZ_META);
+    memset(readmetabuf, 'z', BLK_SZ_META);
+
     //Init list comm lists
-    dev_q_head = (rb_node_t*)malloc(sizeof(rb_node_t));
-    dev_q_tail = (rb_node_t*)malloc(sizeof(rb_node_t));
-    reply_q_head = (rb_node_t*)malloc(sizeof(rb_node_t));
-    reply_q_tail = (rb_node_t*)malloc(sizeof(rb_node_t));
-    gc_q_head = (rb_node_t*)malloc(sizeof(rb_node_t));
-    gc_q_tail = (rb_node_t*)malloc(sizeof(rb_node_t));
-    gcresp_q_head = (rb_node_t*)malloc(sizeof(rb_node_t));
-    gcresp_q_tail = (rb_node_t*)malloc(sizeof(rb_node_t));
-    dev_q_head->next = dev_q_tail;
-    dev_q_tail->prev = dev_q_head;
-    dev_q_head->prio = LONG_MAX;
-    dev_q_tail->prio = LONG_MIN;
-    reply_q_head->next = reply_q_tail;
-    reply_q_tail->prev = reply_q_head;
-    gc_q_head->next = gc_q_tail;
-    gc_q_tail->prev = gc_q_head;
-    gcresp_q_head->next = gcresp_q_tail;
-    gcresp_q_tail->prev = gcresp_q_head;
+    init_comm_lists();
+
+    //Setup vSSD
+    vssd_t * vssd_1;
+    int chl_vssd = 1;
+    //vssd_1 = alloc_regular_vssd(chl_vssd);
+    //Mapping table
+    uint32_t * mapping = malloc(MAX_SECTOR* sizeof(uint32_t));
+    memset(mapping, 0, MAX_SECTOR * sizeof(uint32_t));
+    thread_data_t thr_data;
+    thr_data.vssd = vssd_1;
+    thr_data.mapping = mapping;
+    thr_data.index = port;
 
     pthread_t net_thread;
     if ((rc = pthread_create(&net_thread, NULL, run_net, &port))) {
@@ -270,72 +382,26 @@ int main(int argc, char* argv[]) {
         return EXIT_FAILURE;
     }
     pthread_t gc_thread;
-    //TODO update thread data
-    if ((rc = pthread_create(&gc_thread, NULL, run_gc, NULL))) {
+    if ((rc = pthread_create(&gc_thread, NULL, run_gc, &thr_data))) {
         fprintf(stderr, "error: pthread_create, rc: %d\n", rc);
         return EXIT_FAILURE;
     }
     pthread_t worker_thread;
-    //TODO update thread data
-    if ((rc = pthread_create(&worker_thread, NULL, run_worker, NULL))) {
-        fprintf(stderr, "error: pthread_create, rc: %d\n", rc);
-        return EXIT_FAILURE;
-    }
-
-
-    pthread_join(worker_thread, NULL);
-    pthread_join(net_thread, NULL);
-    pthread_join(gc_thread, NULL);
-    //TODO have the implement/request GC
-    //TODO server reads/writes in threads that pull from the queue
-
-    
-    return 0;
-
-    /*
-    buf = (char*)malloc(BLK_SZ);
-    metabuf = (char*)malloc(BLK_SZ_META);
-    readbuf = (char*)malloc(BLK_SZ);
-    readmetabuf = (char*)malloc(BLK_SZ_META);
-    pthread_mutex_init(&llk, NULL);
-
-    int i,j,ret,rc;
-    for(i=0; i<BLK_SZ; i++)  buf[i] = 'x';
-    for(i=0; i<BLK_SZ_META; i++) metabuf[i] = 'm';
-    
-    
-    //Worst case is 32 since we could have harvesting for each channel, unlikely to actually hit tho
-    thread_data_t gc_thread_data;
-    pthread_t gc_thread;
-    thread_data_t write_thread_data;
-    pthread_t write_thread;
-
-    int chl_id = CHL_ID;
- 	ret = alloc_channel(chl_id);
-
-    //Create GC thread
-    for(i=0; i<BLK_NUM; i++) {
-        gc_thread_data.blks[i] = alloc_block(chl_id);
-        write_thread_data.blks[i] = alloc_block(chl_id);
-        gc_thread_data.s_blks[i] = alloc_block(chl_id);
-    }
-    //if ((rc = pthread_create(&gc_thread, NULL, run_gc, &gc_thread_data))) {
+    //if ((rc = pthread_create(&worker_thread, NULL, run_worker, &thr_data))) {
     //    fprintf(stderr, "error: pthread_create, rc: %d\n", rc);
     //    return EXIT_FAILURE;
     //}
-    if ((rc = pthread_create(&write_thread, NULL, run_wr, &write_thread_data))) {
-        fprintf(stderr, "error: pthread_create, rc: %d\n", rc);
-        return EXIT_FAILURE;
-    }
-    //pthread_join(gc_thread, NULL);
-    pthread_join(write_thread, NULL);
-    
-    //TODO other stuff between experiments / cleanup
-    
+
+    //pthread_join(worker_thread, NULL);
+    pthread_join(net_thread, NULL);
+    pthread_join(gc_thread, NULL);
+
     free(buf);
-    free(metabuf);
     free(readbuf);
+    free(metabuf);
     free(readmetabuf);
+    free(mapping);
+    
     return 0;
-    */
+
 } 

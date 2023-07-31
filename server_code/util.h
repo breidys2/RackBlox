@@ -25,7 +25,7 @@
 
 //!! This needs to be large enough to satisfy NB_RXD*RX_QUEUE_PER_PORT (depends on PER_LCORE and ports)
 #define NB_MBUF 16384
-#define MBUF_SIZE (2048 + sizeof(struct rte_mbuf) + RTE_PKTMBUF_HEADROOM)
+#define MBUF_SIZE (5120 + sizeof(struct rte_mbuf) + RTE_PKTMBUF_HEADROOM)
 #define MBUF_CACHE_SIZE 32
 #define MAXBUF 5120
 
@@ -130,6 +130,7 @@ typedef enum {
     rb_gc_request,  //6
     rb_gc_success,  //7
     rb_gc_deny,     //8
+    rb_gc_fin_suc,  //9
 } req_type;
 
 typedef struct Message_ {
@@ -142,12 +143,8 @@ typedef struct Message_ {
     uint64_t gen_ns;
     uint32_t addr;
     uint64_t lat;
-} __attribute__((__packed__)) Message;
-
-typedef struct MessageReply_ {
-    Message msg;
     char data[4096];
-} MessageReply;
+} __attribute__((__packed__)) Message;
 
 // put packet into TX queue
 static void enqueue_pkt(uint32_t lcore_id, struct rte_mbuf *mbuf) {
@@ -424,6 +421,12 @@ static void init(void) {
                     portid);
         }
 
+        ret = rte_eth_dev_set_mtu(portid,8192);
+        if (ret < 0) {
+            rte_exit(EXIT_FAILURE, "rte_eth_dev_set_mtu: err=%d, port=%u\n", ret,
+                    portid);
+        }
+
         rte_eth_promiscuous_enable(portid);
 
         char mac_buf[RTE_ETHER_ADDR_FMT_SIZE];
@@ -472,6 +475,18 @@ static void init(void) {
     setsockopt(spr1_socket_2, SOL_SOCKET, SO_RCVTIMEO, &read_timeout, sizeof read_timeout);
     memset(&cliaddr, 0, sizeof(cliaddr));
 
+    //Send test packet to both
+    char tbuf[10];
+    if (sendto(spr1_socket_1, tbuf, 10, 0,
+                (struct sockaddr *)&spr1_1, sizeof(spr1_1)) < 0) {
+        printf("Failed to send to spr1_1\n");
+        exit(2);
+    }
+    if (sendto(spr1_socket_2, tbuf, 10, 0,
+                (struct sockaddr *)&spr1_2, sizeof(spr1_2)) < 0) {
+        printf("Failed to send to spr1_2\n");
+        exit(2);
+    }
 
     //Parse the net lats
     FILE *fp;

@@ -317,6 +317,19 @@ control SwitchIngress(
         default_action = send_success();
         size = TABLE_LENGTH;
     }
+    action send_finish_success() {
+        hdr.rb.op = TYPE_GC_FIN_SUC;
+    }
+    table gc_fin_suc_table {
+        key = {
+            ig_intr_md.ingress_port: exact;
+        }
+        actions = {
+            send_finish_success;
+        }
+        default_action = send_finish_success();
+        size = TABLE_LENGTH;
+    }
 
     action send_deny() {
         hdr.rb.op = TYPE_GC_DENY;
@@ -417,7 +430,7 @@ control SwitchIngress(
                     //Send back deny packet
                     gc_deny_table.apply();
                     send_back_table.apply();
-                    //redirect_port_table.apply();
+                    redirect_port_table.apply();
                 }
             }
         }
@@ -434,7 +447,7 @@ control SwitchIngress(
             gc_success_table.apply();
             //Then bounce packet back to sending server
             send_back_table.apply();
-            //redirect_port_table.apply();
+            redirect_port_table.apply();
         }
         else if(hdr.rb.op == TYPE_GC_FINISH) {
             //Set the GC bit in the replica table
@@ -442,10 +455,10 @@ control SwitchIngress(
             //Set the GC bit in the destination table
             unset_gc_destination_table.apply();
             //Set the packet reply type
-            gc_success_table.apply();
+            gc_fin_suc_table.apply();
             //Then bounce packet back to sending server
             send_back_table.apply();
-            //redirect_port_table.apply();
+            redirect_port_table.apply();
         }
         //Route the packet based on the target vssd_id
         lat_ingress_table.apply();

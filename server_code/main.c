@@ -93,11 +93,21 @@ static void generate_packet(uint32_t lcore_id, struct rte_mbuf *mbuf, char* buff
     udp->dst_port = htons(dst_port);
 
     //RackBlox portion of packet forwarding 
-    char *req = (char *)((uint8_t *)eth + sizeof(header_template));
+    Message *req = (Message *)((uint8_t *)eth + sizeof(header_template));
     memcpy(req, buffer, buflen);
     
     mbuf->data_len += buflen;
     mbuf->pkt_len += buflen;
+    printf("Sending to switch\n");
+    printf("type: %d\n", req->type);
+    printf("vssd_id: %u\n", req->vssd_id);
+    printf("ing_lat: %u\n", req->ing_lat);
+    //printf("ing_lat host: %lu\n", ntohul(req->ing_lat));
+    printf("eg_lat: %u\n", req->eg_lat);
+    //printf("eg_lat host: %lu\n", ntohul(req->eg_lat));
+    printf("gen_ns: %lu\n", req->gen_ns);
+    printf("addr: %u\n", req->addr);
+    printf("================\n");
 }
 
 
@@ -120,6 +130,7 @@ static void process_packet(uint32_t lcore_id, struct rte_mbuf *mbuf) {
     //uint64_t reply_run_ns = rte_le_to_cpu_64(req->run_ns);
     //assert(cur_ns > req->gen_ns);
     
+    printf("Recv from switch\n");
     printf("type: %d\n", req->type);
     printf("vssd_id: %u\n", req->vssd_id);
     printf("ing_lat: %u\n", req->ing_lat);
@@ -135,7 +146,7 @@ static void process_packet(uint32_t lcore_id, struct rte_mbuf *mbuf) {
 
     pkt_recv++;
     //Once done "processing" the packet, want to forward it to spr1
-    char buf[100];
+    char buf[MAXBUF];
     memcpy(buf, req, sizeof(Message));
     if (req->vssd_id == 1) {
         if (sendto(spr1_socket_1, buf, sizeof(Message), 0,
@@ -167,7 +178,7 @@ static void rx_loop(uint32_t lcore_id) {
     uint32_t i,j,nb_rx;
     uint32_t done = 0;
 
-    //Infinite loop
+    //Infinite loop until pkt_lim reached
     while(!done) {
         //Iterate over the rx queues for the core
         for (i = 0; i < lconf->n_rx_queue; i++) {

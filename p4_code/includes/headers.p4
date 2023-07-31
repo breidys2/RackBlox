@@ -27,6 +27,7 @@ const op_type_t TYPE_GC_FINISH = 5;
 const op_type_t TYPE_GC_REQUEST = 6;
 const op_type_t TYPE_GC_SUCCESS = 7;
 const op_type_t TYPE_GC_DENY = 8;
+const op_type_t TYPE_GC_FIN_SUC = 9;
 
 
 
