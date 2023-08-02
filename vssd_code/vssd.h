@@ -25,6 +25,8 @@ typedef struct vssd {
     type vssd_type;//What type of vssd is this, mostly for QoL when coding
     //Necessary data structures
     uint32_t * mapping_table_v; //Internal mapping table 
+    uint32_t * valid_pages_v;
+    uint64_t ** bit_map_v;
 
     //Assorted implementation related stuff
     int ghosts;                 //Number of ghosts (if pghost)
@@ -39,16 +41,15 @@ typedef struct vssd {
     uint32_t max_addr;
 } vssd_t;
 
+static int gc_lim = 10;
+static double gc_thresh = 256; 
+
 //This order should matter here, since channel needs the vssd defined
 #include "channel.h"
 
 //Vssd alloc/free functions
 vssd_t * alloc_regular_vssd(int chl);
-vssd_t * alloc_ghost_vssd(vssd_t * reg_vssd, int chl, int blks, int dur);
-vssd_t * alloc_pghost_vssd(vssd_t * ghost);
 void free_regular_vssd(vssd_t * v);
-void free_ghost_vssd(vssd_t * v);
-void free_pghost_vssd(vssd_t * v);
 
 //child/pghost funcs
 void add_ghost_vssd(vssd_t * pghost, vssd_t * ghost);
@@ -66,7 +67,7 @@ void * ret_chl_v(void * args);
 void * prep_chl_v(void * args);
 void * harvest_chl_v(void * args);
 void * ret_blks_v(void * args);
-void erase_blks_v(vssd_t * v);
+void erase_blks_v(vssd_t * v, int lim);
 
 typedef struct _bundle_t {
     int index;
@@ -76,19 +77,9 @@ typedef struct _bundle_t {
 } bundle_t;
 
 //vssd metadata function
-void set_home(vssd_t * v, vssd_t * home);
-vssd_t * get_home(vssd_t * v);
-void add_ghost(vssd_t * v, vssd_t * ghost);
-void set_ghost(vssd_t * v, vssd_t * ghost);
-vssd_t * get_ghost(vssd_t * v);
-vssd_t * get_ghost_ind(vssd_t * v,int ind);
-void set_dur(vssd_t * v, uint32_t dur);
-uint32_t get_dur(vssd_t * v);
 void set_bw(vssd_t * v, uint32_t bw);
 uint32_t get_bw (vssd_t * v);
-void set_sz(vssd_t * v, uint64_t sz);
-uint64_t get_sz(vssd_t * v);
-vssd_t * harvest_ghost(vssd_t * v);
-double gc_thresh(vssd_t * v);
-void do_gc(vssd_t* v); 
+double get_gc_thresh(vssd_t * v);
+void invalidate_page(vssd_t *v, uint32_t lba);
+void do_gc(vssd_t * v, uint32_t* mapping, uint32_t* rev_mapping);
 #endif

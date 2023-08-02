@@ -33,6 +33,7 @@ inline double TimeGap( struct timeval* t_start, struct timeval* t_end ) {
 typedef struct _thread_data_t {
     vssd_t * vssd;
     uint32_t* mapping;
+    uint32_t* rev_mapping;
     int index;
 } thread_data_t;
 static pthread_mutex_t llk;
@@ -141,7 +142,6 @@ void * run_net(void *args) {
                     MSG_WAITALL, ( struct sockaddr *) &cliaddr,
                     &len);
         if (n > 0) {
-            //TODO have the writes be duplicated to the other vssd
             Message* msg = (Message*)malloc(sizeof(Message));
             memcpy(msg, buffer, n);
             printf("Recv pkt with type: %d\n", msg->type);
@@ -211,6 +211,7 @@ void * run_worker(void * args) {
     //Parse input args
     thread_data_t * thr_data = (thread_data_t *)args;
     uint32_t* mapping_table = thr_data->mapping;
+    uint32_t* rev_mapping_table = thr_data->rev_mapping;
     int read_wrap = read_prep * 1024;
     vssd_t* v = thr_data->vssd;
     int cur_page = 0;
@@ -261,7 +262,14 @@ void * run_worker(void * args) {
                 memcpy(reply_node->msg->data, readbuf, 4096);
                 reply_node->msg->type = rb_read_reply;
             } else {
+                //Mark for internal GC
+                if (mapping_table[reply_node->msg->addr] != 0) {
+                    invalidate_page(v, mapping_table[reply_node->msg->addr]);
+                    rev_mapping_table[mapping_table[reply_node->msg->addr]] = 0;
+                }
+                //Execute write
                 mapping_table[reply_node->msg->addr] = cur_lba * 1024 + cur_page;
+                rev_mapping_table[cur_lba*1024 + cur_page] = reply_node->msg->addr;
                 cur_page++;
                 if (cur_page == 1024) {
                     write_block_v(v,cur_lba, buf, metabuf);
@@ -274,8 +282,8 @@ void * run_worker(void * args) {
             pthread_mutex_unlock(&reply_lock);
         }
     }
-    //Cleanup
-    erase_blks_v(v);
+    //Cleanup all blocks
+    erase_blks_v(v, v->max_addr);
     pthread_exit(NULL);
 }
 
@@ -284,23 +292,23 @@ void * run_gc(void * args) {
     //Parse input args
     thread_data_t * thr_data = (thread_data_t *)args;
     uint32_t* mapping_table = thr_data->mapping;
+    uint32_t* rev_mapping_table = thr_data->rev_mapping;
     vssd_t* v = thr_data->vssd;
 
 	struct timespec start;
     clock_gettime(CLOCK_REALTIME, &start);
-    int tgc = 10;
 
     while(1) {
-        sleep(5);
+        //TODO REMOVE
+        sleep(1);
         if(check_exp(&start)) {
             break;
         }
         //Check GC status
-        //double cur_gc_thresh = gc_thresh(v);
-        double cur_gc_thresh = 0.45;
+        double cur_gc_thresh = get_gc_thresh(v);
+        //double cur_gc_thresh = 0.45;
         //if hit hard -> send gc packet
-        if (cur_gc_thresh < soft_thresh || tgc > 0) {
-            tgc--;
+        if (cur_gc_thresh < soft_thresh) {
             //Generate the Message
             rb_node_t* new_node = (rb_node_t*)malloc(sizeof(rb_node_t));
             new_node->msg = (Message*)malloc(sizeof(Message));
@@ -310,7 +318,6 @@ void * run_gc(void * args) {
             } else {
                 new_node->msg->type = rb_gc_request;
             }
-            //Lock
             pthread_mutex_lock(&gc_lock);
             printf("Sending gc req with type %d for %d\n", new_node->msg->type, new_node->msg->vssd_id);
             insert_list_head(new_node,gc_q_head);
@@ -326,11 +333,20 @@ void * run_gc(void * args) {
             printf("recv gc resp packet\n");
             Message* msg_reply = reply_node->msg;
             if (msg_reply->type == rb_gc_success) {
-                //Receive GC -> accept -> do gc
+                //Receive gc success -> do gc
                 printf("Received gc success\n");
-                do_gc(v);
-            } else if (msg_reply->type == rb_gc_deny) {
-                //Receive gc deny -> do nothing
+                doing_gc = 1;
+                do_gc(v,mapping_table,rev_mapping_table);
+                doing_gc = 0;
+                reply_node->msg->type = rb_gc_finish;
+                pthread_mutex_lock(&gc_lock);
+                printf("Sending gc finish reply\n");
+                insert_list_head(reply_node,gc_q_head);
+                pthread_mutex_unlock(&gc_lock);
+                continue;
+                //Send gc finish
+            } else if (msg_reply->type == rb_gc_deny || msg_reply->type == rb_gc_fin_suc) {
+                //Receive gc deny or ack for gc finish -> do nothing
                 printf("Received gc deny\n");
             } else {
                 printf("Got bad gc response!\n");
@@ -343,7 +359,7 @@ void * run_gc(void * args) {
 
 int main(int argc, char* argv[]) {
 
-    int rc;
+    int rc, i;
     int port = atoi(argv[1]);
     pthread_mutex_init(&dev_lock, NULL);
     pthread_mutex_init(&reply_lock, NULL);
@@ -351,6 +367,10 @@ int main(int argc, char* argv[]) {
     pthread_mutex_init(&gcresp_lock, NULL);
 
     vSSD_id = port - 8885;
+    //Make sure vSSDs are on disjoint channels (hw-isolation)
+    for(i = 0; i < vSSD_id-1; i++) {
+        alloc_chl |= (1 << i);
+    }
 
     buf = (char*)malloc(BLK_SZ);
     memset(buf, 'x', BLK_SZ);
@@ -367,13 +387,17 @@ int main(int argc, char* argv[]) {
     //Setup vSSD
     vssd_t * vssd_1;
     int chl_vssd = 1;
-    //vssd_1 = alloc_regular_vssd(chl_vssd);
+    vssd_1 = alloc_regular_vssd(chl_vssd);
     //Mapping table
     uint32_t * mapping = malloc(MAX_SECTOR* sizeof(uint32_t));
+    uint32_t vssd_pages = vssd_1->max_addr*1024;
+    uint32_t * rev_mapping = malloc(vssd_pages * sizeof(uint32_t));
     memset(mapping, 0, MAX_SECTOR * sizeof(uint32_t));
+    memset(rev_mapping, 0,vssd_pages * sizeof(uint32_t));
     thread_data_t thr_data;
     thr_data.vssd = vssd_1;
     thr_data.mapping = mapping;
+    thr_data.rev_mapping = rev_mapping;
     thr_data.index = port;
 
     pthread_t net_thread;
@@ -387,12 +411,12 @@ int main(int argc, char* argv[]) {
         return EXIT_FAILURE;
     }
     pthread_t worker_thread;
-    //if ((rc = pthread_create(&worker_thread, NULL, run_worker, &thr_data))) {
-    //    fprintf(stderr, "error: pthread_create, rc: %d\n", rc);
-    //    return EXIT_FAILURE;
-    //}
+    if ((rc = pthread_create(&worker_thread, NULL, run_worker, &thr_data))) {
+        fprintf(stderr, "error: pthread_create, rc: %d\n", rc);
+        return EXIT_FAILURE;
+    }
 
-    //pthread_join(worker_thread, NULL);
+    pthread_join(worker_thread, NULL);
     pthread_join(net_thread, NULL);
     pthread_join(gc_thread, NULL);
 

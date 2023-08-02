@@ -16,7 +16,6 @@
 #define SPR8_IP "192.17.97.69"
 
 
-
 //Potential packet types
 typedef enum {
     rb_write = 0,
@@ -71,6 +70,7 @@ int vSSD_id;
 //GC Stuff
 double soft_thresh = 0.35;
 double hard_thresh = 0.25;
+int doing_gc = 0;
 
 //Communication queues
 rb_node_t* dev_q_head;
