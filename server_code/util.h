@@ -15,7 +15,8 @@
 #define SPR1_PORT_1 8886
 #define SPR1_PORT_2 8887
 #define SPR1_IP "192.17.101.15"
-#define PKT_LIM 44
+#define PKT_LIM 1000000
+#define NET_LIM 600000
 
 #define MAX_LCORES 2
 #define MAX_BURST_SIZE 32
@@ -41,7 +42,7 @@ struct sockaddr_in cliaddr;
 int spr1_socket_1;
 int spr1_socket_2;
 char buffer[MAXBUF];
-uint64_t net_lats[PKT_LIM];
+uint64_t net_lats[NET_LIM];
 struct rte_mempool *pktmbuf_pool = NULL;
 struct rte_ether_addr port_eth_addrs[RTE_MAX_ETHPORTS];
 uint32_t n_enabled_ports = 0;
@@ -492,7 +493,7 @@ static void init(void) {
     FILE *fp;
     int ret;
     fp = fopen("net_trace.dat","r");
-    for (int i = 0; i < PKT_LIM; i++) {
+    for (int i = 0; i < NET_LIM; i++) {
         ret = fscanf(fp, "%lu", &net_lats[i]);
         ////For this testing, take one way -> rtt
         //net_lats[i] *= 2;

@@ -208,6 +208,15 @@ static void rx_loop(uint32_t lcore_id) {
             send_pkt_burst(lcore_id);
             printf("Forwarded to spr7: %d\n", n);
         }
+        n = recvfrom(spr1_socket_2, buffer, MAXBUF, 0, ( struct sockaddr *) &cliaddr, &len);
+        if (n > 0) {
+            //Send packet through switch
+            mbuf = rte_pktmbuf_alloc(pktmbuf_pool);
+            generate_packet(lcore_id, mbuf, buffer, n);
+            enqueue_pkt(lcore_id, mbuf);
+            send_pkt_burst(lcore_id);
+            printf("Forwarded to spr7: %d\n", n);
+        }
     }
     printf("Done Processing Packets\n");
 }

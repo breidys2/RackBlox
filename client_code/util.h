@@ -24,8 +24,9 @@
 
 //!! This needs to be large enough to satisfy NB_RXD*RX_QUEUE_PER_PORT (depends on PER_LCORE and ports)
 #define NB_MBUF 16384
-#define MBUF_SIZE (2048 + sizeof(struct rte_mbuf) + RTE_PKTMBUF_HEADROOM)
+#define MBUF_SIZE (5120 + sizeof(struct rte_mbuf) + RTE_PKTMBUF_HEADROOM)
 #define MBUF_CACHE_SIZE 32
+#define DATA_SZ 4096
 
 #define TYPE_DEBUG 1
 
@@ -37,10 +38,13 @@ struct rte_mempool *pktmbuf_pool = NULL;
 struct rte_ether_addr port_eth_addrs[RTE_MAX_ETHPORTS];
 uint32_t n_enabled_ports = 0;
 uint32_t enabled_port_mask = 1;
+uint32_t req_num = 1;
+uint32_t reply_num = 1;
+char trace_name[100];
 uint32_t enabled_ports[RTE_MAX_ETHPORTS];
 uint32_t n_lcores = 0;
 StorageReq* trace_reqs;
-uint64_t req_latencies[PKT_LIM];
+uint64_t* req_latencies;
 
 /********* Misc *********/
 
@@ -67,10 +71,11 @@ int cmp_func( const void* a , const void* b ) {
 
 //Dumping all for now, switch to summary stats later or log file
 void print_req_latencies() {
-    qsort(req_latencies, PKT_LIM, sizeof(uint64_t), cmp_func);
-    for (int i = 0; i < PKT_LIM; i++) {
+    qsort(req_latencies, reply_num, sizeof(uint64_t), cmp_func);
+    for (int i = 0; i < reply_num; i++) {
         printf("%lu ", req_latencies[i]);
     }
+    printf("\n");
 }
 
 /********** Distributions **********/
@@ -183,6 +188,7 @@ typedef struct Message_ {
     uint64_t gen_ns;
     uint32_t addr;
     uint64_t lat;
+    char data[DATA_SZ];
 } __attribute__((__packed__)) Message;
 
 // put packet into TX queue
@@ -457,6 +463,11 @@ static void init(void) {
         ret = rte_eth_dev_start(portid);
         if (ret < 0) {
             rte_exit(EXIT_FAILURE, "rte_eth_dev_start: err=%d, port=%u\n", ret,
+                    portid);
+        }
+        ret = rte_eth_dev_set_mtu(portid,8192);
+        if (ret < 0) {
+            rte_exit(EXIT_FAILURE, "rte_eth_dev_set_mtu: err=%d, port=%u\n", ret,
                     portid);
         }
 

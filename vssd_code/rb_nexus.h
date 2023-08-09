@@ -87,6 +87,12 @@ double sliding_window;
 double window_vals[WINDOW_SZ];
 int win_ptr;
 
+//Background GC
+double bg_thresh = 0.55;
+double alpha = 0.5;
+double idle_time = 0;
+double idle_thresh = 30*1000*1000;
+
 //vSSD stuff
 int read_prep = 50;
 int chl_num = 1;

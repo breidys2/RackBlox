@@ -71,6 +71,7 @@ vssd_t * alloc_regular_vssd(int chl) {
         alloc_chl |= (1 << i);
         //Record this as an allocated channel for this vssd 
         ret_vssd->allocated_chl[alloc++] = i;
+        ret_vssd->free_block_sz += CHL_BLK_NUM;
         th_info[i].a = ret_vssd;
         th_info[i].index = i;
         if ((rc = pthread_create(&threads[i], NULL, prep_chl_v, &th_info[i]))) {
@@ -158,9 +159,12 @@ uint32_t alloc_block_v(vssd_t * v, int chl_id) {
     }
 
     //Map them together
-    v->mapping_table_v[lba_addr] = ppa_addr;
-    v->valid_pages_v[lba_addr] = 1024;
-    v->bit_map_v[lba_addr] = malloc(1024);
+    uint32_t lba_ind = lba_addr % v->max_addr;
+    v->mapping_table_v[lba_ind] = ppa_addr;
+    v->valid_pages_v[lba_ind] = 1024;
+    v->bit_map_v[lba_ind] = malloc(1024);
+    //Set bitmap to all 1
+    memset(v->bit_map_v[lba_ind],-1,16);
 
     //add to alloc block list, don't need to make a new node since we keep the old one
     add_list_v(&v->alloc_block_list[chl_id], free_blk);
@@ -219,11 +223,11 @@ double get_gc_thresh(vssd_t * v) {
 
 void invalidate_page(vssd_t *v, uint32_t lba) {
     uint32_t page = lba%1024;
-    lba/=1024;
-    v->valid_pages_v[lba]--;
+    uint32_t lba_ind = (lba/1024)%v->max_addr;
+    v->valid_pages_v[lba_ind]--;
     int bit_ind = page /64;
     int bit_off = page % 64;
-    v->bit_map_v[lba][bit_ind] ^= (1L << bit_off);
+    v->bit_map_v[lba_ind][bit_ind] ^= (1L << bit_off);
 }
 
 void do_gc(vssd_t * v, uint32_t* mapping, uint32_t* rev_mapping) {
@@ -236,34 +240,37 @@ void do_gc(vssd_t * v, uint32_t* mapping, uint32_t* rev_mapping) {
     node_t* cur_node = v->alloc_block_list[chl];
     int cur_pg = 0;
     int cur_lba = alloc_block_v(v,chl);
+    int cur_lba_ind = cur_lba % v->max_addr;
     while(cnt < gc_lim) {
         if (cur_node == NULL) break;
         uint32_t ppa = cur_node->ppa;
-        if (v->valid_pages_v[ppa] < gc_thresh) {
+        uint32_t ppa_ind = ppa % v->max_addr;
+        if (v->valid_pages_v[ppa_ind] < gc_thresh) {
             //GC this block
             for(i = 0; i < 16; i++) {
                 for(j = 0; j < 64; j++) {
-                    if (((1L << 64) & v->bit_map_v[ppa][i]) > 0) {
+                    if (((1L << 64) & v->bit_map_v[ppa_ind][i]) > 0) {
                         //Valid page, read and copy
                         int p_ind = i * 64 + j;
                         read_page_v(v, p_ind, ppa, i, gc_buf, gc_metabuf);
                         write_page_v(v, cur_lba, cur_pg, gc_buf, gc_metabuf);
                         //Redo mappings
-                        mapping[rev_mapping[ppa + p_ind]] = cur_lba + cur_pg;
-                        rev_mapping[cur_lba + cur_pg] = rev_mapping[ppa+p_ind];
-                        rev_mapping[ppa + p_ind] = 0;
+                        mapping[rev_mapping[ppa_ind + p_ind]] = cur_lba_ind + cur_pg;
+                        rev_mapping[cur_lba_ind + cur_pg] = rev_mapping[ppa_ind+p_ind];
+                        rev_mapping[ppa_ind + p_ind] = 0;
                         cur_pg++;
                         if (cur_pg == 1024) {
                             cur_pg = 0;
                             cur_lba = alloc_block_v(v,chl);
+                            cur_lba_ind = cur_lba % v->max_addr;
                         }
                     }
                 }
             }
             erase_blk_v(ppa);
-            free(v->bit_map_v[ppa]);
-            v->bit_map_v[ppa] = NULL;
-            v->valid_pages_v[ppa] = 0;
+            free(v->bit_map_v[ppa_ind]);
+            v->bit_map_v[ppa_ind] = NULL;
+            v->valid_pages_v[ppa_ind] = 0;
         }
         cur_node = cur_node->next;
     }
@@ -283,9 +290,10 @@ void * ret_blks_v(void * args) {
 
         //Erase the block
         erase_blk_v(f_block->ppa);
-        free(v->bit_map_v[f_block->ppa]);
-        v->bit_map_v[f_block->ppa] = NULL;
-        v->valid_pages_v[f_block->ppa] = 0;
+        int ppa_ind = f_block->ppa & v->max_addr;
+        free(v->bit_map_v[ppa_ind]);
+        v->bit_map_v[ppa_ind] = NULL;
+        v->valid_pages_v[ppa_ind] = 0;
         cnt++;
 
         //Return to free list

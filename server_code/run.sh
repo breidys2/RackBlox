@@ -29,6 +29,7 @@ shift $((OPTIND-1))
 echo "Making..."
 make || exit 1
 echo "Done with Make, now running server..."
+#sudo ./build/netflash -l $CORE_1 -- -p $PORT_MASK
 sudo ./build/netflash -l $CORE_1,$CORE_2 -- -p $PORT_MASK
 echo "Done..."
 

@@ -36,7 +36,6 @@ typedef struct _thread_data_t {
     uint32_t* rev_mapping;
     int index;
 } thread_data_t;
-static pthread_mutex_t llk;
 static pthread_mutex_t dev_lock;
 static pthread_mutex_t reply_lock;
 static pthread_mutex_t gc_lock;
@@ -131,6 +130,7 @@ void * run_net(void *args) {
     len = sizeof(cliaddr);  //len is value/result
 	struct timespec start;
     clock_gettime(CLOCK_REALTIME, &start);
+    uint64_t prev_ns = 0;
    
     printf("waiting\n");
     sleep(5);
@@ -157,7 +157,13 @@ void * run_net(void *args) {
                 msg->lat += sliding_window;
 
                 //Set the combined prio 
-                new_node->prio = (uint64_t) (msg->lat - get_cur_ns());
+                uint64_t cur_ns = get_cur_ns();
+                new_node->prio = (uint64_t) (msg->lat - cur_ns);
+
+                //Update sliding window for background GC
+                if (prev_ns == 0) prev_ns = cur_ns;
+                idle_time = (idle_time * alpha) + (1-alpha) * (cur_ns-prev_ns);
+                prev_ns = cur_ns;
 
                 //Insert
                 pthread_mutex_lock(&dev_lock);
@@ -183,6 +189,7 @@ void * run_net(void *args) {
         if (reply_node != NULL) {
             Message* msg_reply = reply_node->msg;
             //send data back
+            printf("Send reply type: %d\n", reply_node->msg->type);
             memcpy(buffer, msg_reply, sizeof(Message));
             n = sendto(recv_socket, buffer, sizeof(Message), 0, (struct sockaddr *) &cliaddr, len);
             free_node(reply_node);
@@ -274,11 +281,13 @@ void * run_worker(void * args) {
                 if (cur_page == 1024) {
                     write_block_v(v,cur_lba, buf, metabuf);
                     cur_lba = alloc_block_v(v, v->allocated_chl[0]);
+                    cur_page = 0;
                 }
                 reply_node->msg->type = rb_write_reply;
             }
             pthread_mutex_lock(&reply_lock);
             insert_list_head(reply_node, reply_q_head);
+            printf("Inserting reply type: %d\n", reply_node->msg->type);
             pthread_mutex_unlock(&reply_lock);
         }
     }
@@ -299,8 +308,6 @@ void * run_gc(void * args) {
     clock_gettime(CLOCK_REALTIME, &start);
 
     while(1) {
-        //TODO REMOVE
-        sleep(1);
         if(check_exp(&start)) {
             break;
         }
@@ -308,12 +315,13 @@ void * run_gc(void * args) {
         double cur_gc_thresh = get_gc_thresh(v);
         //double cur_gc_thresh = 0.45;
         //if hit hard -> send gc packet
-        if (cur_gc_thresh < soft_thresh) {
+        if (cur_gc_thresh < soft_thresh || (cur_gc_thresh < bg_thresh && idle_time > idle_thresh)) {
+            printf("gc_thresh: %f\n", cur_gc_thresh);
             //Generate the Message
             rb_node_t* new_node = (rb_node_t*)malloc(sizeof(rb_node_t));
             new_node->msg = (Message*)malloc(sizeof(Message));
             new_node->msg->vssd_id = vSSD_id;
-            if (cur_gc_thresh < hard_thresh) {
+            if (cur_gc_thresh < hard_thresh || (cur_gc_thresh < bg_thresh && idle_time > idle_thresh)) {
                 new_node->msg->type = rb_gc;
             } else {
                 new_node->msg->type = rb_gc_request;
@@ -360,7 +368,15 @@ void * run_gc(void * args) {
 int main(int argc, char* argv[]) {
 
     int rc, i;
+    if (argc < 3) {
+        printf("Please provide <port_num> <timeout>\n");
+        exit(-1);
+    }
     int port = atoi(argv[1]);
+    expire_time = atoi(argv[2]);
+    //To ns
+    expire_time *= 1000L * 1000L * 1000L;
+    
     pthread_mutex_init(&dev_lock, NULL);
     pthread_mutex_init(&reply_lock, NULL);
     pthread_mutex_init(&gc_lock, NULL);

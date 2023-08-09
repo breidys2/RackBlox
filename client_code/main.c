@@ -101,17 +101,21 @@ static void generate_packet(uint32_t lcore_id, struct rte_mbuf *mbuf, uint64_t g
 
     //Update some stuff in Message
     StorageReq cur_req = trace_reqs[pkt_id];
-    if (cur_req.RW == 'R') {
-        req->type = rb_read;
-    } else {
-        req->type = rb_write;
-        //memset(req->data, 'y', DATA_SZ);
-    }
+    //if (cur_req.RW == 'R') {
+    //    req->type = rb_read;
+    //} else {
+    //    req->type = rb_write;
+    //    //memset(req->data, 'y', DATA_SZ);
+    //}
     //req->type = rb_gc_finish;
+    req->type = cur_req.RW;
     req->addr = cur_req.Addr;
     //req->type = msg_types[vssd_id];
     //For now, always select vssd 1
-    req->vssd_id = 1;
+    req->vssd_id = cur_req.vssd_id;
+    if (req->vssd_id == 0) {
+        req->vssd_id = (rand() % 2) + 1;
+    }
     req->ing_lat = 0;
     req->eg_lat = 0;
     req->gen_ns = gen_ns;
@@ -153,7 +157,7 @@ static void process_packet(uint32_t lcore_id, struct rte_mbuf *mbuf) {
     //uint64_t reply_run_ns = rte_le_to_cpu_64(req->run_ns);
     //assert(cur_ns > req->gen_ns);
     
-    printf("Receiving Packet from:\n");
+    printf("Receiving Packet %d from:\n", pkt_recv);
     printf("type: %d\n", req->type);
     printf("vssd_id: %u\n", req->vssd_id);
     printf("ing_lat: %lu\n", req->ing_lat);
@@ -179,7 +183,7 @@ static void rx_loop(uint32_t lcore_id) {
     uint32_t done = 0;
 
     //Infinite loop
-    while(!done) {
+    while(pkt_recv < reply_num) {
         //Iterate over the rx queues for the core
         for (i = 0; i < lconf->n_rx_queue; i++) {
             //Receive a burst
@@ -191,13 +195,14 @@ static void rx_loop(uint32_t lcore_id) {
                 rte_prefetch0(rte_pktmbuf_mtod(mbuf, void*));
                 //Process the packet
                 process_packet(lcore_id, mbuf);
-                if (pkt_recv >= PKT_LIM) done = 1;
+                //if (pkt_recv >= reply_num) done = 1;
                 //Free the mbuf, we are done with this packet
                 rte_pktmbuf_free(mbuf);
             }
         }
     }
     print_req_latencies();
+    //free(req_latencies);
     printf("Packet Process Limit Reached\n");
 }
 
@@ -217,7 +222,7 @@ static void fixed_tx_loop(uint32_t lcore_id) {
     printf("lcore %u start sending fixed packets in %" PRIu32 " qps\n", lcore_id,
             qps);
 
-    while (pkt_sent < PKT_LIM) {
+    while (pkt_sent < req_num) {
         uint64_t gen_ns = exp_dist_next_arrival_ns(dist);
         uint32_t pkts_length = NUM_PKTS * sizeof(Message);
         for (uint8_t i = 0; i < NUM_PKTS; i++) {
@@ -266,7 +271,7 @@ static void parse_client_args_help(char *program_name) {
 
 static int parse_client_args(int argc, char **argv) {
     int opt, num;
-    while((opt = getopt(argc, argv, "p:h")) != -1) {
+    while((opt = getopt(argc, argv, "p:n:t:r:h")) != -1) {
         switch (opt) {
             case 'h':
                 fprintf(stdout, "HELP TEXT: \n");
@@ -274,6 +279,15 @@ static int parse_client_args(int argc, char **argv) {
                 break;
             case 'p':
                 enabled_port_mask = atoi(optarg);
+                break;
+            case 'n':
+                req_num = atoi(optarg);
+                break;
+            case 'r':
+                reply_num = atoi(optarg);
+                break;
+            case 't':
+                strcpy(trace_name, optarg);
                 break;
             default:
                 parse_client_args_help(argv[0]);
@@ -301,12 +315,13 @@ main(int argc, char **argv)
     argv += ret;
 
     ret = parse_client_args(argc, argv);
+    req_latencies = (uint64_t*)malloc(reply_num * sizeof(uint64_t));
     if (ret < 0)  {
         rte_exit(EXIT_FAILURE, "bad client args\n");
     }
 
     init();
-    trace_reqs = parse_trace("auctionmark_1.trace", 50);
+    trace_reqs = parse_trace(trace_name, req_num);
 
     //!! Commenting out here since we only run one client
 	/* Launches the function on each lcore. 8< */
