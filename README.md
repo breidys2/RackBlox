@@ -89,13 +89,16 @@ First initialize the vSSDs. The current run.sh sets up hardware isolated vSSDs w
 ```
 Next, we setup the server code:
 ```
-./serer_code/run.sh 
+./server_code/run.sh 
 ```
 
 Finally, we run the client. In this example, we test with 10k requests:
 ```
 ./run.sh auctionmark_small.trace 10000 10000
 ```
+
+Please note that server_code/main.c and client_code/main.c have placeholder IP addresses. Please update these with your specific
+client/server topology before running.
 
 ## 4. Extending RackBlox
 

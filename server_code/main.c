@@ -32,11 +32,13 @@
 
 #define NUM_PKTS 2
 
-//First trying just sending from one port to the other
+//TODO These are filler values, please replace with your own Client/Server IPs
 char ip_client[][32] = {"192.168.2.3",};
 char ip_server[][32] = {"192.168.2.1","192.168.2.3", "192.168.2.4"};
 
+//Custom port used to identify RackBlox packets, needs to be consistent between client/server/switch
 uint16_t src_port = 8888;
+//Unused, filler
 uint16_t dst_port = 1234;
 
 uint64_t pkt_sent = 0;
@@ -45,7 +47,6 @@ uint64_t pkt_recv = 0;
 
 
 /************* CUSTOM PARAMS **************/
-uint32_t qps = 100000;
 
 //Packet Related
 uint32_t req_id = 0;
@@ -87,7 +88,7 @@ static void generate_packet(uint32_t lcore_id, struct rte_mbuf *mbuf, char* buff
     mbuf->pkt_len += sizeof(header_template);
 
     //Add the ip addresses  (inet_pton converts text to binary) (replaces filler from header_template)
-    inet_pton(AF_INET, ip_client[0], &(ip->src_addr));
+    inet_pton(AF_INET, ip_client[req->vssd_id-1], &(ip->src_addr));
     inet_pton(AF_INET, ip_server[0], &(ip->dst_addr));
     udp->src_port = htons(src_port);
     udp->dst_port = htons(dst_port);

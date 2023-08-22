@@ -122,11 +122,6 @@ control SwitchIngress(
         actions = {
             set_gc_replica;
         }
-        default_action = set_gc_replica(0);
-        const entries = {
-            (0x1) : set_gc_replica(1);
-            (0x2) : set_gc_replica(2);
-        }
         size = TABLE_LENGTH;
     }
 
@@ -139,11 +134,6 @@ control SwitchIngress(
         }
         actions = {
             unset_gc_replica;
-        }
-        default_action = unset_gc_replica(0);
-        const entries = {
-            (0x1) : unset_gc_replica(1);
-            (0x2) : unset_gc_replica(2);
         }
         size = TABLE_LENGTH;
     }
@@ -174,11 +164,6 @@ control SwitchIngress(
         actions = {
             set_gc_destination;
         }
-        default_action = set_gc_destination(0);
-        const entries = {
-            (0x1) : set_gc_destination(1);
-            (0x2) : set_gc_destination(2);
-        }
         size = TABLE_LENGTH;
     }
 
@@ -191,11 +176,6 @@ control SwitchIngress(
         }
         actions = {
             unset_gc_destination;
-        }
-        default_action = unset_gc_destination(0);
-        const entries = {
-            (0x1) : unset_gc_destination(1);
-            (0x2) : unset_gc_destination(2);
         }
         size = TABLE_LENGTH;
     }
@@ -226,19 +206,6 @@ control SwitchIngress(
         actions = {
             set_output_port;
         }
-        //Default action is to send out of port 6 (sprlab007's port 1)
-        //Requests will always be coming from sprlab007's port 0
-        default_action = set_output_port(300);
-        const entries = {
-            //Mapping vssd_id = 0 -> sprlab007 port 1 (port 300)
-            (0x0) : set_output_port(300);
-            //Mapping vssd_id = 1 -> sprlab008 port 0 (port 276)
-            (0x1) : set_output_port(276);
-            //Mapping vssd_id = 2 -> sprlab008 port 1 (port 284)
-            (0x2) : set_output_port(284);
-            //For debug
-            (0x5) : set_output_port(276);
-        }
         size = TABLE_LENGTH;
     }
 
@@ -250,17 +217,6 @@ control SwitchIngress(
         actions = {
             read_replica_table;
         }
-        //Default action is to send out of port 6 (sprlab007's port 1)
-        //Requests will always be coming from sprlab007's port 0
-        //default_action = read_replica_table(0);
-        const entries = {
-            //This one is filler, probably can remove
-            (0x0) : read_replica_table(0);
-            //Go from vSSD 1->2
-            (0x1) : read_replica_table(2);
-            //Go from vSSD 2->1
-            (0x2) : read_replica_table(1);
-        }
         size = TABLE_LENGTH;
     }
     
@@ -271,17 +227,6 @@ control SwitchIngress(
         }
         actions = {
             read_destination_table;
-        }
-        //Default action is to send out of port 6 (sprlab007's port 1)
-        //Requests will always be coming from sprlab007's port 0
-        //default_action = read_destination_table(3232236034);
-        const entries = {
-            //Mapping vssd_id = 0 -> sprlab007 port 1 (192.168.2.2)
-            (0x0) : read_destination_table(3232236034);
-            //Mapping vssd_id = 1 -> sprlab008 port 0 (192.168.2.3)
-            (0x1) : read_destination_table(3232236035);
-            //Mapping vssd_id = 2 -> sprlab008 port 1 (192.168.2.4)
-            (0x2) : read_destination_table(3232236036);
         }
         size = TABLE_LENGTH;
     }

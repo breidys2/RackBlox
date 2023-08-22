@@ -33,13 +33,13 @@
 #define NUM_PKTS 1
 
 //First trying just sending from one port to the other
+//TODO These are placeholders, replace with your own client/server IPs
 char ip_client[][32] = {"192.168.2.1",};
 char ip_server[][32] = {"192.168.2.3", "192.168.2.4"};
-int msg_types[] = {2, 2, 2, 2,2, 2, 2, 2,2, 2, 2, 2,2, 2, 2, 2,2, 2, 2, 2,2, 2, 2, 2,2, 2, 2, 2,2, 2, 2, 2,2, 2, 2, 2,2, 2, 2, 2,2, 2, 2, 2};
-//int msg_types[] = {2};
-//int msg_types[] = {5, 2, 2, 2};
 
+//Custom port for RackBlox, checked by switch
 uint16_t src_port = 8888;
+//Unused
 uint16_t dst_port = 1234;
 
 uint64_t pkt_sent = 0;
@@ -93,7 +93,6 @@ static void generate_packet(uint32_t lcore_id, struct rte_mbuf *mbuf, uint64_t g
     
     //Add the ip addresses  (inet_pton converts text to binary) (replaces filler from header_template)
     inet_pton(AF_INET, ip_client[0], &(ip->src_addr));
-    inet_pton(AF_INET, ip_server[0], &(ip->dst_addr));
     //printf("Src Port %d\n", src_port);
     udp->src_port = htons(src_port);
     udp->dst_port = htons(dst_port);
@@ -101,21 +100,17 @@ static void generate_packet(uint32_t lcore_id, struct rte_mbuf *mbuf, uint64_t g
 
     //Update some stuff in Message
     StorageReq cur_req = trace_reqs[pkt_id];
-    //if (cur_req.RW == 'R') {
-    //    req->type = rb_read;
-    //} else {
-    //    req->type = rb_write;
-    //    //memset(req->data, 'y', DATA_SZ);
-    //}
-    //req->type = rb_gc_finish;
     req->type = cur_req.RW;
+    if (req->type == rb_write) {
+        memset(req->data, 'y', DATA_SZ);
+    }
     req->addr = cur_req.Addr;
-    //req->type = msg_types[vssd_id];
     //For now, always select vssd 1
     req->vssd_id = cur_req.vssd_id;
     if (req->vssd_id == 0) {
         req->vssd_id = (rand() % 2) + 1;
     }
+    inet_pton(AF_INET, ip_server[req->vssd_id-1], &(ip->dst_addr));
     req->ing_lat = 0;
     req->eg_lat = 0;
     req->gen_ns = gen_ns;
