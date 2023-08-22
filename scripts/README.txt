@@ -29,7 +29,7 @@ After each script, we run a helper script (clean_bits.sh) to clear the gc bits w
 
 ##TROUBLESHOOTING
 The vSSDs are set to expire after a given period of time. The default is 15 minutes, but this is configurable in the setup.sh script.
-Therefore, please check that the vSSDs are still running vi 'htop'
+Therefore, please check that the vSSDs are still running via 'htop'
 
 If the client hangs, you can ctrl-c and then run:
 ./clean_client.sh
