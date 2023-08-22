@@ -102,3 +102,7 @@ Finally, we run the client. In this example, we test with 10k requests:
 The switch logic in p4_code/basic_switch/basic_rackblox.p4. The ingress processing shows the GC redirection logic while the egress is only involved in per-hop latency computation. Changes to the core logic of RackBlox will need to extend ingress processing. Additionally, the packet header is defined in p4_code/includes/headers.p4 where users may wish to add/remove fields for their use cases. Be sure to also modify the packet format in the server/client/vssd_code to match. 
 
 Coordinated I/O scheduling and the GC SDF based GC logic are implemented in vssd_code/rb_nexus.c 
+
+## 5. License
+
+This project is licensed under the terms of the Apache 2.0 license.
