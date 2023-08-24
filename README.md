@@ -28,7 +28,11 @@ As mentioned in the hardware requirements, RackBlox needs a programmable SSD tha
 ├── client_code   #Client code, submits requests and receives replies
 │   ├── Makefile
 │   ├── README.md
+│   ├── YCSBA_small.trace #YCSB .trace files
+│   ├── YCSBC_small.trace
+│   ├── YCSB_write_only.trace
 │   ├── auctionmark_small.trace #.trace files that include small request patterns to demonstrate functionality
+│   ├── basic.trace #simple read/writes
 │   ├── clear.trace
 │   ├── gc_1.trace
 │   ├── gc_2.trace
@@ -59,6 +63,27 @@ As mentioned in the hardware requirements, RackBlox needs a programmable SSD tha
 │   ├── net_trace.dat #Network trace used to mimic real data center latency
 │   ├── run.sh    #Script for building and running the server
 │   └── util.h    #Network utilities
+├── scripts
+│   ├── README.txt   #Please read for detailed description of scripts
+│   ├── switch_setup.py #Setup for switch
+│   ├── clean_bits.sh
+│   ├── clean_client.sh
+│   ├── clean_up.sh  #Shut down client/server/vssds
+│   ├── defines.sh   #Please update with your topology
+│   ├── run_vssd.sh  #Sets up vSSD
+│   ├── setup.sh     #Single script to initiate server/switch/vssds
+│   ├── test_basic.sh  #Scripts to initiate various experiments to play with RackBlox
+│   ├── test_end_to_end.sh
+│   ├── test_gc_1.sh
+│   ├── test_gc_2.sh
+│   ├── test_gc_both.sh
+│   ├── test_gc_req_1.sh
+│   ├── test_gc_req_2.sh
+│   ├── test_gc_req_both_1.sh
+│   ├── test_gc_req_both_2.sh
+│   ├── test_ycsb_50_50.sh
+│   ├── test_ycsb_read_only.sh
+│   └── test_ycsb_write_only.sh
 └── vssd_code
     ├── Makefile
     ├── README.md
@@ -82,6 +107,10 @@ As mentioned in the hardware requirements, RackBlox needs a programmable SSD tha
 
 ## 3. Basic Usage
 
+Before running anything, please replace placeholder addresses at client_code/main.c:36 and server_code/main.c:35 (marked with TODOs).
+
+Basic functionality can be achieve with the following commands regardless of topology: 
+
 First initialize the vSSDs. The current run.sh sets up hardware isolated vSSDs where the input represents the ID for the vssd when routing packets.
 ```
 ./vssd_code/run.sh 1 &
@@ -97,8 +126,25 @@ Finally, we run the client. In this example, we test with 10k requests:
 ./run.sh auctionmark_small.trace 10000 10000
 ```
 
-Please note that server_code/main.c and client_code/main.c have placeholder IP addresses. Please update these with your specific
-client/server topology before running.
+We include scripts/ with many helpful scripts for playing with RackBlox. 
+
+Before running any scripts, please update CLIENT, SWITCH, SERVER, and RESULT in defines.sh with your corresponding topology. 
+Next, please copy setup_switch.py to your switch and modify it to include the ports for your topology. The script also includes a skeleton
+for how to add table entries with the script which you can use to adjust RackBlox for your topology.  
+Finally, run:
+```
+source ./defines.sh
+./setup.sh
+```
+
+Afterwards, you may run any test script. E.g.:
+```
+./test_basic.sh
+```
+
+You may create your trace/test script to test different requests patterns.
+
+
 
 ## 4. Extending RackBlox
 
