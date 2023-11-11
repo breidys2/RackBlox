@@ -3,7 +3,7 @@ RackBlox is our software-defined rack-scale storage architecture built with netw
 RackBlox RackBlox decouples the storage management functions of flash-based solid-state drives (SSDs), and allow the SDN to track and manage the states of SSDs in a rack.  
 RackBlox has three major components: (1) coordinated I/O scheduling, in which it dynamically adjusts the I/O scheduling in the storage stack with the measured and predicted network latency, such that it can coordinate the effort of I/O scheduling across the network and storage stack for achieving predictable end-to-end performance; (2) coordinated garbage collection (GC), in which it will coordinate the GC activities across the SSDs in a rack to minimize their impact on incoming I/O requests; (3) rack-scale wear leveling, in which it enables global wear leveling among SSDs in a rack by periodically swapping data, for achieving improved device lifetime for the entire rack.
 
-RackBlox will be published in *The 29th ACM Symposium on Operating Systems Principles (SOSP 2023)*.
+RackBlox is published in *The proceedings of the 29th ACM Symposium on Operating Systems Principles (SOSP 2023)* [Link](https://dl.acm.org/doi/10.1145/3600006.3613170).
 
 ## 1. Overview/Prerequisites
 
